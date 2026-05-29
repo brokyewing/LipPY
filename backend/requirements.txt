@@ -1,0 +1,25 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# ── Beam decode + KenLM (Stage 1 dil modeli) ───────
+pyctcdecode>=0.5.0
+pygtrie>=2.5.0
+# KenLM Python binding — Windows'ta KURULAMAZ (C++ derleme).
+# WSL/Linux'ta: pip install https://github.com/kpu/kenlm/archive/master.zip
+# kenlm
+
+# ── AV-Fusion (sesli model — Whisper-medium encoder) ──
+# DIKKAT: transformers 4.47.1'e PIN edildi. transformers 5.x
+#   WhisperEncoderLayer.forward imzasini degistirir:
+#   "TypeError: forward() takes 3 positional arguments but 4 were given".
+transformers==4.47.1
+imageio-ffmpeg>=0.4.9        # ffmpeg binary (audio cikarma + video segment kesme)
+soundfile>=0.12.0            # audio okuma (torchaudio backend fallback)
+
+# ── Uzun video (VAD segmentasyon) ──────────────────
+silero-vad>=5.0              # konusma segmenti tespiti (sesli uzun video)
+
+# Not: torch / torchaudio / opencv-python / mediapipe → ana requirements.txt'te.
+# WSL kurulum: ~/lippy-env venv aktif + export HF_HOME=<Windows HF cache>
+#   (Whisper-medium'u tekrar indirmeden Windows cache'inden kullanir).

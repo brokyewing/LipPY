@@ -1,0 +1,30 @@
+# LipPY - Turkce Dudak Okuma Projesi
+# Kurulum: pip install -r requirements.txt
+# Backend (AV-Fusion / uzun video / canli) ek bagimliliklari: backend/requirements.txt
+
+# ── Video Indirme ──────────────────────────────────
+yt-dlp                      # YouTube video indirme (veri-olusturma/youtubevideo.py)
+
+# ── Whisper Transkript ─────────────────────────────
+faster-whisper              # Whisper transkript (veri-olusturma/adim1_transkript.py)
+
+# ── Video Isleme + ROI Cikarma ─────────────────────
+opencv-python               # Video okuma/yazma (cv2)
+mediapipe                   # Yuz landmark tespiti (ROI — egitim ile ayni)
+scikit-image                # Affine transform (skimage)
+numpy                       # Numerik islemler
+tqdm                        # Ilerleme cubugu
+
+# ── Veri Temizleme ─────────────────────────────────
+zeyrek                      # Turkce morfolojik analiz (veri_temizleyici.py)
+
+# ── Model (backend inference + Kaggle egitim) ──────
+torch                       # PyTorch (Conv3D + ResNet-SiLU + Conformer)
+torchaudio                  # Conformer modeli
+
+# ── GPU Destegi (NVIDIA) ───────────────────────────
+nvidia-cublas-cu12          # faster-whisper CUDA icin
+
+# ── Sistem Gereksinimleri (pip ile degil) ──────────
+# ffmpeg  -> winget install Gyan.FFmpeg   (backend WSL'de imageio-ffmpeg paketi var)
+# deno    -> winget install DenoLand.Deno (yt-dlp JS challenge cozumu icin, opsiyonel)

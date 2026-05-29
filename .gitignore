@@ -1,0 +1,40 @@
+# ── Model agirliklari ve turevleri ──
+# Buyuk dosyalar git'e girmez; Kaggle Output / Hugging Face'den indirilir.
+# (av-fusion 1.5G + video 182M best_model.pt, KenLM 40M, corpus vb.)
+checkpoints/
+*.pt
+*.pth
+*.klm
+*.onnx
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+lippy-env/
+venv/
+.venv/
+env/
+
+# ── Node / Frontend ──
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── Veri / medya / cache ──
+data/
+*.wav
+*.mp4
+*.webm
+*.avi
+.cache/
+mel_cache/
+*_skipped.txt
+
+# ── Isletim sistemi / editor ──
+~$*
+.DS_Store
+Thumbs.db
+*.tmp
+.vscode/
