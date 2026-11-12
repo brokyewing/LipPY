@@ -997,3 +997,132 @@
   pointer-events: none;
   cursor: not-allowed;
 }
+
+
+/* ─── Tez Benchmark Örnekleri & Kıyaslama Tablosu ──────── */
+
+.sample-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.65rem;
+}
+
+@media (max-width: 640px) {
+  .sample-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sample-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.sample-btn:hover {
+  background: var(--bg-3);
+  border-color: var(--border-strong);
+}
+
+.sample-btn.active {
+  background: color-mix(in srgb, var(--accent-glow) 45%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  box-shadow: var(--shadow-glow);
+}
+
+.sample-btn-top {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sample-btn-top strong {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.sample-duration {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-glow) 40%, var(--bg-1));
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.sample-speaker {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sample-gt {
+  font-size: 0.76rem;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  line-height: 1.35;
+}
+
+.viseme-note {
+  padding: 0.7rem 0.85rem;
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.viseme-note strong {
+  color: var(--warning);
+}
+
+.comparison-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.comparison-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.comparison-row.highlight {
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+
+.comparison-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.comparison-row.highlight .comparison-tag {
+  color: var(--success-soft);
+}
+
+.comparison-row code {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-1);
+}

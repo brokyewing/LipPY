@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../lib/icons.jsx'
 import { formatMs } from '../lib/formatters.js'
-import { inferShort } from '../lib/api.js'
+import { getSamples, getSampleVideoUrl, inferSample, inferShort } from '../lib/api.js'
 import { VideoDropzone } from '../components/VideoDropzone.jsx'
 import { ResultCard } from '../components/ResultCard.jsx'
 import { MetricsGrid } from '../components/MetricsGrid.jsx'
@@ -9,15 +9,16 @@ import { MetricsGrid } from '../components/MetricsGrid.jsx'
 // Decode modu etiketleri (kullanici dostu)
 const DECODE_LABELS = {
   greedy: 'Greedy (hızlı, LM yok)',
-  beam_lm: 'Beam + KenLM (bağlam)',
-  attn: 'Attention decoder',
+  beam: 'Beam Search (k=10)',
+  beam_lm: 'Beam + KenLM (5-gram bağlam)',
+  attn: 'Attention decoder (Seq2Seq)',
   greedy_lex: 'Greedy + Sözlük düzeltme',
   beam_lm_lex: 'Beam+KenLM + Sözlük',
   attn_lex: 'Attention + Sözlük',
 }
 
 /**
- * Mode A — Kısa Video (5-60 saniye klip, sync response).
+ * Mode A — Kısa Video (5-60 saniye klip, sync response + hazır tez örnekleri).
  *
  * Props:
  *   models: [{id, name, available}]
@@ -33,8 +34,25 @@ export function ShortVideoMode({ models, setToast }) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
 
+  const [samples, setSamples] = useState([])
+  const [selectedSampleId, setSelectedSampleId] = useState(null)
+
   const videoRef = useRef(null)
   const audioInputRef = useRef(null)
+
+  // Hazır Türkçe tez örneklerini yükle
+  useEffect(() => {
+    let alive = true
+    getSamples()
+      .then((data) => {
+        if (!alive) return
+        setSamples(data?.samples || [])
+      })
+      .catch(() => {
+        /* ignore */
+      })
+    return () => { alive = false }
+  }, [])
 
   // Model otomatik seçimi (ilk available)
   useEffect(() => {
@@ -69,23 +87,65 @@ export function ShortVideoMode({ models, setToast }) {
   }, [videoUrl])
 
   const handleFile = useCallback((f) => {
-    if (videoUrl) URL.revokeObjectURL(videoUrl)
+    if (videoUrl?.startsWith('blob:')) URL.revokeObjectURL(videoUrl)
     setFile(f)
+    setSelectedSampleId(null)
     setVideoUrl(URL.createObjectURL(f))
     setResult(null)
   }, [videoUrl])
 
   const clearVideo = () => {
-    if (videoUrl) URL.revokeObjectURL(videoUrl)
+    if (videoUrl?.startsWith('blob:')) URL.revokeObjectURL(videoUrl)
     setFile(null)
+    setSelectedSampleId(null)
     setVideoUrl(null)
     setVideoMeta(null)
     setResult(null)
   }
 
+  const runSampleInference = useCallback(async (sampleId, targetModel, targetDecode) => {
+    setLoading(true)
+    try {
+      const sm = models.find((m) => m.id === targetModel)
+      const useDecode = sm?.decode_modes?.includes(targetDecode) ? targetDecode : (sm?.default_decode || 'greedy')
+      const data = await inferSample({
+        sampleId,
+        model: targetModel,
+        decodeMode: useDecode,
+      })
+      setResult(data)
+    } catch (e) {
+      setToast({
+        type: 'error',
+        message: e.message || 'Örnek tahmin başarısız',
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [models, setToast])
+
+  // Seçili bir örnek varken model veya decodeMode değişirse otomatik güncelle
+  useEffect(() => {
+    if (selectedSampleId && !file) {
+      runSampleInference(selectedSampleId, model, decodeMode)
+    }
+  }, [selectedSampleId, model, decodeMode, file, runSampleInference])
+
+  const handleSelectSample = (sampleId) => {
+    if (videoUrl?.startsWith('blob:')) URL.revokeObjectURL(videoUrl)
+    setFile(null)
+    setVideoMeta(null)
+    setVideoUrl(getSampleVideoUrl(sampleId))
+    setSelectedSampleId(sampleId)
+  }
+
   const handleInfer = async () => {
+    if (selectedSampleId && !file) {
+      await runSampleInference(selectedSampleId, model, decodeMode)
+      return
+    }
     if (!file) {
-      setToast({ type: 'error', message: 'Önce bir video yükleyin' })
+      setToast({ type: 'error', message: 'Önce bir video yükleyin veya hazır tez örneklerinden birini seçin' })
       return
     }
     setLoading(true)
@@ -117,22 +177,62 @@ export function ShortVideoMode({ models, setToast }) {
 
   return (
     <div className="mode-grid">
-      <VideoDropzone
-        file={file}
-        videoUrl={videoUrl}
-        videoMeta={videoMeta}
-        videoRef={videoRef}
-        onFile={handleFile}
-        onClear={clearVideo}
-        maxSizeMB={50}
-        placeholder="Video yükle veya buraya sürükle"
-        hint="MP4, WebM (5-60 saniye ideal, max 50 MB)"
-      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <VideoDropzone
+          file={file}
+          videoUrl={videoUrl}
+          videoMeta={videoMeta}
+          videoRef={videoRef}
+          onFile={handleFile}
+          onClear={clearVideo}
+          maxSizeMB={50}
+          placeholder="Video yükle veya buraya sürükle"
+          hint="MP4, WebM (5-60 saniye ideal, max 50 MB)"
+        />
+
+        {samples.length > 0 && (
+          <section className="card">
+            <div className="card-header">
+              <h2 className="card-title">Hazır Türkçe Tez Örnekleri (Klip Yüklemeden Dene)</h2>
+              <span style={{ fontSize: '0.72rem', color: 'var(--accent-soft)' }}>
+                4 Benchmark Klip
+              </span>
+            </div>
+            <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <div className="sample-grid">
+                {samples.map((s) => {
+                  const active = selectedSampleId === s.id
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={`sample-btn ${active ? 'active' : ''}`}
+                      onClick={() => handleSelectSample(s.id)}
+                    >
+                      <div className="sample-btn-top">
+                        <strong>{s.title}</strong>
+                        <span className="sample-duration">{s.duration_sec ?? s.duration_s} sn</span>
+                      </div>
+                      <span className="sample-speaker">{s.speaker}</span>
+                      <code className="sample-gt">"{s.ground_truth}"</code>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
 
       <div className="right-panel">
         <section className="card">
           <div className="card-header">
             <h2 className="card-title">Tahmin</h2>
+            {selectedSampleId && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--success-soft)' }}>
+                Örnek Klip Seçili ({selectedSampleId})
+              </span>
+            )}
           </div>
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div className="field">
@@ -150,10 +250,8 @@ export function ShortVideoMode({ models, setToast }) {
                   </option>
                 ))}
               </select>
-              {selectedModel && !selectedModel.available && (
-                <span className="field-hint" style={{ color: 'var(--warning)' }}>
-                  Bu model için checkpoint bulunamadı.
-                </span>
+              {selectedModel?.description && (
+                <span className="field-hint">{selectedModel.description}</span>
               )}
             </div>
 
@@ -170,11 +268,11 @@ export function ShortVideoMode({ models, setToast }) {
                     <option key={dm} value={dm}>{DECODE_LABELS[dm] || dm}</option>
                   ))}
                 </select>
-                <span className="field-hint">greedy / beam_lm / _lex (sözlük) kıyaslamak için değiştir</span>
+                <span className="field-hint">greedy / beam_lm / attn çıktısını kıyaslamak için değiştir</span>
               </div>
             )}
 
-            {needsAudio && (
+            {needsAudio && !selectedSampleId && (
               <div className="field">
                 <label className="field-label">Ses Dosyası (opsiyonel)</label>
                 <input
@@ -197,7 +295,7 @@ export function ShortVideoMode({ models, setToast }) {
               type="button"
               className="btn btn-primary btn-full btn-lg"
               onClick={handleInfer}
-              disabled={loading || !file || availableModels.length === 0}
+              disabled={loading || (!file && !selectedSampleId) || availableModels.length === 0}
             >
               {loading ? (<><span className="spinner" /> İşleniyor…</>) : (<>{Icon.play} Tahmin Yap</>)}
             </button>
@@ -208,11 +306,14 @@ export function ShortVideoMode({ models, setToast }) {
 
         <ResultCard
           rawText={result?.success ? result.text : null}
+          groundTruth={result?.processing?.ground_truth || null}
+          visemeNote={result?.processing?.viseme_note || null}
+          comparison={result?.processing?.comparison || null}
           rightMeta={result?.success ? formatMs(result.processing?.total_ms) : null}
           emptyHint={
             result && !result.success
               ? 'Tahmin başarısız.'
-              : 'Video yükleyip tahmin başlat.'
+              : 'Video yükleyip veya soldaki hazır tez örneklerinden birini seçip tahmin başlat.'
           }
         />
 

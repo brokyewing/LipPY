@@ -3,8 +3,13 @@ import { Icon } from '../lib/icons.jsx'
 export function Header({ health, theme, setTheme }) {
   const statusOk = health?.status === 'ok'
   const statusDown = health?.status === 'down'
+  const modeTag = health?.mode === 'checkpoint'
+    ? ' · Aktif Model (PyTorch)'
+    : health?.mode === 'demo'
+    ? ' · Tez Benchmark'
+    : ''
   const statusLabel = statusOk
-    ? (health.device === 'cuda' ? 'GPU' : 'CPU')
+    ? `${health.device === 'cuda' ? 'GPU' : 'CPU'}${modeTag}`
     : statusDown
     ? 'Offline'
     : '...'
@@ -16,7 +21,7 @@ export function Header({ health, theme, setTheme }) {
           <div className="brand-logo">Lp</div>
           <div>
             <div className="brand-title">LipPY</div>
-            <div className="brand-subtitle">Türkçe dudak okuma — video + ses</div>
+            <div className="brand-subtitle">Türkçe Görsel-İşitsel Dudak Okuma — Video (%49.1 PER) + AV-Fusion (%24.7 PER)</div>
           </div>
         </div>
 
@@ -24,7 +29,7 @@ export function Header({ health, theme, setTheme }) {
           <span
             className={`status-chip ${statusOk ? 'ok' : statusDown ? 'err' : ''}`}
             title={statusOk
-              ? `Bağlandı: ${health.device?.toUpperCase()} ${health.gpu || ''}`.trim()
+              ? `Bağlandı: ${health.device?.toUpperCase()} (${health.mode || 'aktif'})`.trim()
               : 'Backend erişilemez'}
           >
             <span className="status-dot" />

@@ -17,7 +17,7 @@ import { openLiveSocket } from '../lib/api.js'
  */
 const SEGMENT_MS = 3000
 
-export function LiveCaptureMode({ models, setToast }) {
+export function LiveCaptureMode({ models }) {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const recorderRef = useRef(null)
@@ -40,6 +40,7 @@ export function LiveCaptureMode({ models, setToast }) {
   useEffect(() => {
     if (models.length > 0 && !models.find((m) => m.id === model)) {
       const first = models.find((m) => m.available)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (first) setModel(first.id)
     }
   }, [models, model])

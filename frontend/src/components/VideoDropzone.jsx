@@ -55,7 +55,7 @@ export function VideoDropzone({
     <section className="card video-card">
       <div className="card-header">
         <h2 className="card-title">Video</h2>
-        {file && !disabled && (
+        {(file || videoUrl) && !disabled && (
           <button
             type="button"
             className="btn btn-ghost btn-icon"
@@ -118,14 +118,22 @@ export function VideoDropzone({
         </div>
       )}
 
-      {file && (
+      {(file || videoMeta) && (
         <div className="video-meta">
-          <span className="video-meta-item">
-            <strong>{file.name}</strong>
-          </span>
-          <span className="video-meta-item">
-            Boyut: <strong>{formatBytes(file.size)}</strong>
-          </span>
+          {file ? (
+            <>
+              <span className="video-meta-item">
+                <strong>{file.name}</strong>
+              </span>
+              <span className="video-meta-item">
+                Boyut: <strong>{formatBytes(file.size)}</strong>
+              </span>
+            </>
+          ) : (
+            <span className="video-meta-item">
+              <strong>Veri Seti Dudak ROI Klibi (.mp4)</strong>
+            </span>
+          )}
           {videoMeta && (
             <>
               <span className="video-meta-item">

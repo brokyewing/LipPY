@@ -2,14 +2,144 @@
 LipPhonemeModel — video modeli (Conv3D + ResNetSiLU + Conformer + CTC head).
 
 Eğitim notebook'undaki (kaggle/train-video-model.ipynb) sınıfla birebir uyumludur.
-dim_ff inference.py registry'den geçirilir (video modeli = 2048).
-best_model.pt checkpoint'i doğrudan yüklenebilir.
+torchaudio.models.Conformer yüklü değilse birebir aynı state_dict anahtarlarına ve
+matematiğe sahip saf PyTorch Conformer kullanılır (strict=True ile 320/320 anahtar eşleşir).
 """
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torchaudio.models import Conformer
+
+try:
+    from torchaudio.models import Conformer  # type: ignore
+except ImportError:
+    class _FeedForwardModule(nn.Module):
+        def __init__(self, input_dim: int, ffn_dim: int, dropout: float = 0.0):
+            super().__init__()
+            self.sequential = nn.Sequential(
+                nn.LayerNorm(input_dim),
+                nn.Linear(input_dim, ffn_dim, bias=True),
+                nn.SiLU(),
+                nn.Dropout(dropout),
+                nn.Linear(ffn_dim, input_dim, bias=True),
+                nn.Dropout(dropout),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.sequential(x)
+
+    class _ConvolutionModule(nn.Module):
+        def __init__(self, input_dim: int, num_channels: int, depthwise_kernel_size: int, dropout: float = 0.0):
+            super().__init__()
+            self.layer_norm = nn.LayerNorm(input_dim)
+            self.sequential = nn.Sequential(
+                nn.Conv1d(input_dim, 2 * num_channels, 1, stride=1, padding=0, bias=True),
+                nn.GLU(dim=1),
+                nn.Conv1d(
+                    num_channels,
+                    num_channels,
+                    depthwise_kernel_size,
+                    stride=1,
+                    padding=(depthwise_kernel_size - 1) // 2,
+                    groups=num_channels,
+                    bias=True,
+                ),
+                nn.BatchNorm1d(num_channels),
+                nn.SiLU(),
+                nn.Conv1d(num_channels, input_dim, 1, stride=1, padding=0, bias=True),
+                nn.Dropout(dropout),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # x: (T, B, D)
+            x = self.layer_norm(x)
+            x = x.permute(1, 2, 0)  # (B, D, T)
+            x = self.sequential(x)
+            return x.permute(2, 0, 1)  # (T, B, D)
+
+    class _ConformerLayer(nn.Module):
+        def __init__(
+            self,
+            input_dim: int,
+            ffn_dim: int,
+            num_attention_heads: int,
+            depthwise_conv_kernel_size: int,
+            dropout: float = 0.0,
+        ):
+            super().__init__()
+            self.ffn1 = _FeedForwardModule(input_dim, ffn_dim, dropout=dropout)
+            self.self_attn_layer_norm = nn.LayerNorm(input_dim)
+            self.self_attn = nn.MultiheadAttention(input_dim, num_attention_heads, dropout=dropout)
+            self.self_attn_dropout = nn.Dropout(dropout)
+            self.conv_module = _ConvolutionModule(
+                input_dim=input_dim,
+                num_channels=input_dim,
+                depthwise_kernel_size=depthwise_conv_kernel_size,
+                dropout=dropout,
+            )
+            self.ffn2 = _FeedForwardModule(input_dim, ffn_dim, dropout=dropout)
+            self.final_layer_norm = nn.LayerNorm(input_dim)
+
+        def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor | None = None) -> torch.Tensor:
+            # x: (T, B, D)
+            residual = x
+            x = self.ffn1(x)
+            x = x * 0.5 + residual
+
+            residual = x
+            x = self.self_attn_layer_norm(x)
+            x, _ = self.self_attn(
+                query=x,
+                key=x,
+                value=x,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
+            )
+            x = self.self_attn_dropout(x)
+            x = x + residual
+
+            residual = x
+            x = self.conv_module(x)
+            x = x + residual
+
+            residual = x
+            x = self.ffn2(x)
+            x = x * 0.5 + residual
+
+            return self.final_layer_norm(x)
+
+    class Conformer(nn.Module):
+        def __init__(
+            self,
+            input_dim: int,
+            num_heads: int,
+            ffn_dim: int,
+            num_layers: int,
+            depthwise_conv_kernel_size: int,
+            dropout: float = 0.0,
+        ):
+            super().__init__()
+            self.conformer_layers = nn.ModuleList(
+                [
+                    _ConformerLayer(
+                        input_dim=input_dim,
+                        ffn_dim=ffn_dim,
+                        num_attention_heads=num_heads,
+                        depthwise_conv_kernel_size=depthwise_conv_kernel_size,
+                        dropout=dropout,
+                    )
+                    for _ in range(num_layers)
+                ]
+            )
+
+        def forward(self, input: torch.Tensor, lengths: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            # input: (B, T, D)
+            max_len = input.size(1)
+            mask = torch.arange(max_len, device=lengths.device).unsqueeze(0) >= lengths.unsqueeze(1)
+            x = input.transpose(0, 1)  # (T, B, D)
+            for layer in self.conformer_layers:
+                x = layer(x, key_padding_mask=mask)
+            return x.transpose(0, 1), lengths
 
 
 # Mimari sabitleri (v1b notebook ile aynı)
@@ -26,11 +156,7 @@ class SiLU(nn.Module):
 
 
 class BasicBlockSiLU(nn.Module):
-    """Eğitim notebook'undaki ile birebir uyumlu — attribute adı 'ds' (NOT 'downsample').
-
-    Checkpoint state_dict key'leri: trunk.layerX.0.ds.0.weight, trunk.layerX.0.ds.1.weight, ...
-    'downsample' adı kullanılırsa state_dict eşleşmez.
-    """
+    """Eğitim notebook'undaki ile birebir uyumlu — attribute adı 'ds' (NOT 'downsample')."""
     expansion = 1
 
     def __init__(self, ic: int, oc: int, stride: int = 1, ds: nn.Module | None = None):
@@ -40,7 +166,7 @@ class BasicBlockSiLU(nn.Module):
         self.conv2 = nn.Conv2d(oc, oc, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(oc)
         self.act = SiLU()
-        self.ds = ds  # eğitim notebook'unda 'ds' adı kullanıldı
+        self.ds = ds
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x if self.ds is None else self.ds(x)
@@ -115,11 +241,9 @@ class LipPhonemeModel(nn.Module):
         x: torch.Tensor,
         input_lengths: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # x: (B, T, H, W) → (B, 1, T, H, W) → frontend3D → (B, 64, T, H', W')
         x = x.unsqueeze(1)
         x = self.frontend3D(x)
         B, C, T, H, W = x.shape
-        # (B, T, C, H, W) → (B*T, C, H, W) → trunk → avg_pool → (B*T, 512)
         x = x.permute(0, 2, 1, 3, 4).reshape(B * T, C, H, W)
         x = self.avg_pool(self.trunk(x)).view(B, T, -1)
         x = self.proj(x)

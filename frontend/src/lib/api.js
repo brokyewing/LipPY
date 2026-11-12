@@ -2,25 +2,43 @@
  * LipPY API client — tüm backend çağrıları buradan.
  *
  * Endpoint'ler:
- *   GET  /api/health               → sunucu canlılık
- *   GET  /api/models               → mevcut modeller
- *   POST /api/infer                → kısa video (sync)
- *   POST /api/infer_long           → uzun video (async, job_id döner)
- *   GET  /api/jobs/:id             → job status polling
- *   GET  /api/jobs/:id/stream      → SSE progress
+ *   GET  /api/health                 → sunucu canlılık
+ *   GET  /api/models                 → mevcut modeller
+ *   GET  /api/samples                → hazır Türkçe tez benchmark örnekleri
+ *   POST /api/infer                  → kısa video (sync)
+ *   POST /api/infer_sample           → hazır örnek klip çıkarımı (sync)
+ *   POST /api/infer_long             → uzun video (async, job_id döner)
+ *   POST /api/infer_long_demo        → uzun video SSE demo (async, job_id döner)
+ *   GET  /api/jobs/:id               → job status polling
+ *   GET  /api/jobs/:id/stream        → SSE progress
  *   GET  /api/jobs/:id/subtitles.vtt → WebVTT altyazı
- *   WS   /ws/live                  → canlı webcam stream
+ *   WS   /ws/live                    → canlı webcam stream
  */
 
-export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+function resolveApiBase() {
+  const envBase = import.meta.env.VITE_API_BASE
+  if (envBase) return envBase.replace(/\/$/, '')
+  if (typeof window === 'undefined') return 'http://localhost:8000'
+  if (window.location.port === '5173') return 'http://localhost:8000'
+  const path = window.location.pathname
+  const match = path.match(/^(\/demos\/[^/]+)/)
+  return match ? match[1] : ''
+}
+
+export const API_BASE = resolveApiBase()
 
 const wsProto = (() => {
   if (typeof window === 'undefined') return 'ws'
   return window.location.protocol === 'https:' ? 'wss' : 'ws'
 })()
 
-const apiHost = API_BASE.replace(/^https?:\/\//, '')
-export const WS_BASE = `${wsProto}://${apiHost}`
+export const WS_BASE = (() => {
+  if (API_BASE.startsWith('http://') || API_BASE.startsWith('https://')) {
+    return `${wsProto}://${API_BASE.replace(/^https?:\/\//, '')}`
+  }
+  if (typeof window === 'undefined') return 'ws://localhost:8000'
+  return `${wsProto}://${window.location.host}${API_BASE}`
+})()
 
 async function parseJSON(res) {
   try {
@@ -39,13 +57,18 @@ async function request(path, options = {}) {
   return data
 }
 
-// ─── Health / Models ────────────────────────────────────
+// ─── Health / Models / Samples ──────────────────────────
 
 export const getHealth = () => request('/api/health')
 
 export const getModels = () => request('/api/models').then((d) => d?.models || [])
 
-// ─── Short video (sync) ─────────────────────────────────
+export const getSamples = () => request('/api/samples')
+
+export const getSampleVideoUrl = (sampleId) =>
+  `${API_BASE}/api/samples/${encodeURIComponent(sampleId)}/video.mp4`
+
+// ─── Short video (sync) & Sample Benchmark ──────────────
 
 export async function inferShort({ file, model = 'video', audioFile = null, decodeMode = null }) {
   const form = new FormData()
@@ -60,6 +83,16 @@ export async function inferShort({ file, model = 'video', audioFile = null, deco
   return request('/api/infer', { method: 'POST', body: form })
 }
 
+export async function inferSample({ sampleId, model = 'video', decodeMode = null }) {
+  const form = new FormData()
+  form.append('sample_id', sampleId)
+  form.append('model', model)
+  if (decodeMode) {
+    form.append('decode_mode', decodeMode)
+  }
+  return request('/api/infer_sample', { method: 'POST', body: form })
+}
+
 // ─── Long video (async + SSE) ───────────────────────────
 
 export async function startLongJob({ file, model = 'video' }) {
@@ -67,6 +100,12 @@ export async function startLongJob({ file, model = 'video' }) {
   form.append('file', file)
   form.append('model', model)
   return request('/api/infer_long', { method: 'POST', body: form })
+}
+
+export async function startLongDemoJob({ model = 'av-fusion' } = {}) {
+  const form = new FormData()
+  form.append('model', model)
+  return request('/api/infer_long_demo', { method: 'POST', body: form })
 }
 
 export const getJob = (jobId) => request(`/api/jobs/${jobId}`)
@@ -81,13 +120,18 @@ export function streamJob(jobId, onEvent, onError) {
     try {
       const data = JSON.parse(e.data)
       onEvent?.(data)
+      if (data.status === 'done' || data.status === 'error' || data.status === 'canceled') {
+        es.close()
+      }
     } catch (err) {
       onError?.(err)
     }
   }
   es.onerror = (err) => {
-    onError?.(err)
-    es.close()
+    if (es.readyState !== EventSource.CLOSED) {
+      onError?.(err)
+      es.close()
+    }
   }
   return () => es.close()
 }

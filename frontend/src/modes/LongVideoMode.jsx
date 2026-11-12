@@ -7,24 +7,22 @@ import {
   segmentsToVtt,
   downloadBlob,
 } from '../lib/formatters.js'
-import { startLongJob, streamJob } from '../lib/api.js'
+import { startLongDemoJob, startLongJob, streamJob } from '../lib/api.js'
 import { VideoDropzone } from '../components/VideoDropzone.jsx'
 
 /**
  * Mode B — Uzun Video (20-25 dk, async job + SSE).
  *
  * Akış:
- *   1. Upload → startLongJob → jobId
+ *   1. Upload → startLongJob (veya startLongDemoJob) → jobId
  *   2. streamJob(jobId, onEvent) → faz faz progress
- *   3. Done → transcript segmentleri + video player + VTT altyazı
- *
- * Backend henüz hazır değilse "coming soon" göster.
+ *   3. Done → transcript segmentleri + video player + VTT/SRT/TXT altyazı
  */
 export function LongVideoMode({ models, setToast }) {
   const [file, setFile] = useState(null)
   const [videoUrl, setVideoUrl] = useState(null)
   const [videoMeta, setVideoMeta] = useState(null)
-  const [model, setModel] = useState('video')
+  const [model, setModel] = useState('av-fusion')
 
   const [jobId, setJobId] = useState(null)
   const [job, setJob] = useState(null) // {status, phase, progress, ...}
@@ -37,12 +35,12 @@ export function LongVideoMode({ models, setToast }) {
   const timelineRef = useRef(null)
 
   useEffect(() => {
-    if (models.length > 0) {
+    if (models.length > 0 && !models.find((m) => m.id === model)) {
       const firstAvailable = models.find((m) => m.available)
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (firstAvailable) setModel(firstAvailable.id)
     }
-  }, [models])
+  }, [models, model])
 
   // Video meta — loadedmetadata event ile güncelle
   useEffect(() => {
@@ -99,37 +97,52 @@ export function LongVideoMode({ models, setToast }) {
     setJobId(null)
   }
 
+  const attachJobStream = (job_id) => {
+    setJobId(job_id)
+    setTranscript([])
+    const close = streamJob(job_id, (ev) => {
+      setJob(ev)
+      if (ev.partial_segments) {
+        setTranscript((t) => [...t, ...ev.partial_segments])
+      }
+      if (ev.status === 'done' && ev.transcript) {
+        setTranscript(ev.transcript)
+      }
+    }, (err) => {
+      console.error('SSE error', err)
+    })
+    closeStreamRef.current = close
+  }
+
   const startJob = async () => {
     if (!file) {
-      setToast({ type: 'error', message: 'Önce bir video yükleyin' })
+      setToast({ type: 'error', message: 'Önce bir video yükleyin veya örnek SSE akışını başlatın' })
       return
     }
     setJob({ status: 'submitting' })
     try {
       const { job_id } = await startLongJob({ file, model })
-      setJobId(job_id)
-
-      const close = streamJob(job_id, (ev) => {
-        setJob(ev)
-        if (ev.partial_segments) {
-          setTranscript((t) => [...t, ...ev.partial_segments])
-        }
-        if (ev.status === 'done' && ev.transcript) {
-          setTranscript(ev.transcript)
-        }
-      }, (err) => {
-        console.error('SSE error', err)
-      })
-      closeStreamRef.current = close
+      attachJobStream(job_id)
     } catch (e) {
       setJob(null)
       setJobId(null)
-      // Backend endpoint henüz yok → kullanıcı dostu mesaj
       if (e.message?.includes('404') || e.message?.toLowerCase().includes('not found')) {
         setBackendUnavailable(true)
       } else {
         setToast({ type: 'error', message: e.message })
       }
+    }
+  }
+
+  const startDemoJob = async () => {
+    setJob({ status: 'submitting' })
+    try {
+      const { job_id } = await startLongDemoJob({ model })
+      attachJobStream(job_id)
+    } catch (e) {
+      setJob(null)
+      setJobId(null)
+      setToast({ type: 'error', message: e.message || 'Demo akışı başlatılamadı' })
     }
   }
 
@@ -141,7 +154,7 @@ export function LongVideoMode({ models, setToast }) {
 
   const exportAs = (format) => {
     if (transcript.length === 0) return
-    const base = file?.name?.replace(/\.[^.]+$/, '') || 'transcript'
+    const base = file?.name?.replace(/\.[^.]+$/, '') || 'lippy-altyazi'
     const content =
       format === 'srt' ? segmentsToSrt(transcript) :
       format === 'vtt' ? segmentsToVtt(transcript) :
@@ -205,7 +218,7 @@ export function LongVideoMode({ models, setToast }) {
             <div className="phases">
               {phases.map((p) => {
                 const isActive = job.phase === p.id
-                const isDone = phases.findIndex((x) => x.id === job.phase) > phases.findIndex((x) => x.id === p.id)
+                const isDone = job.status === 'done' || phases.findIndex((x) => x.id === job.phase) > phases.findIndex((x) => x.id === p.id)
                 const pct = isDone ? 100 : isActive ? (job.progress ?? 0) : 0
                 return (
                   <div key={p.id} className={`phase-row ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}>
@@ -223,16 +236,26 @@ export function LongVideoMode({ models, setToast }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {!isProcessing ? (
-              <button
-                type="button"
-                className="btn btn-primary btn-full btn-lg"
-                onClick={startJob}
-                disabled={!file || models.filter((m) => m.available).length === 0}
-              >
-                {Icon.play} İşlemi Başlat
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-full btn-lg"
+                  onClick={startJob}
+                  disabled={!file || models.filter((m) => m.available).length === 0}
+                >
+                  {Icon.play} İşlemi Başlat (Yüklenen Video)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-full"
+                  onClick={startDemoJob}
+                  disabled={models.filter((m) => m.available).length === 0}
+                >
+                  {Icon.play} Örnek Uzun Video Altyazı Akışını Başlat (4 Gerçek Klip SSE)
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -251,10 +274,6 @@ export function LongVideoMode({ models, setToast }) {
                 <strong>Uzun video servisi henüz aktif değil.</strong>
                 <br />
                 <code>/api/infer_long</code> endpoint'i hazır olduğunda bu mod kullanılabilir.
-                <br />
-                <span style={{ fontSize: '0.8em', color: 'var(--text-3)' }}>
-                  Şimdilik kısa video modu ile test edebilirsiniz.
-                </span>
               </div>
             </div>
           )}

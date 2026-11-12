@@ -26,6 +26,8 @@ frontend/.vite/
 data/
 *.wav
 *.mp4
+!backend/sample_videos/*.mp4
+!backend/sample_videos/*.txt
 *.webm
 *.avi
 .cache/

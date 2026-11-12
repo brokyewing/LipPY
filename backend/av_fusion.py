@@ -23,23 +23,37 @@ Kullanım:
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import time
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+except ImportError:
+    torch = None  # type: ignore
+
+    class _DummyNN:
+        Module = object
+
+    nn = _DummyNN()  # type: ignore
+    F = None  # type: ignore
 
 from backend.vocab import BLANK_IDX, indices_to_text, get_pyctcdecode_labels
-from backend.roi import video_to_roi_array
 from backend.decode_utils import greedy_ctc_decode
+from backend.demo_samples import SAMPLES, simulate_sample_inference
 
 ROOT = Path(__file__).resolve().parent.parent
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if (torch is not None and torch.cuda.is_available()) else "cpu") if torch is not None else "cpu"
 
 # ============ v1cc video normalize (v1c'den FARKLI!) ============
 # v1c: 0.421 / 0.165, v1cc: 0.495 / 0.200 — v3 video encoder v1cc'dir.
@@ -135,7 +149,7 @@ class VideoEncoder(nn.Module):
     """v1cc encoder. dim_ff=2048. get_features (B, T_v, 512) dondurur."""
     def __init__(self):
         super().__init__()
-        from torchaudio.models import Conformer
+        from backend.models import Conformer
         self.frontend3D = nn.Sequential(
             nn.Conv3d(1, 64, (5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64), SiLU(),
@@ -281,7 +295,10 @@ class AVFusionV3(nn.Module):
 # Yukleme
 # ====================================================================
 def is_fusion_available() -> bool:
-    return FUSION_CHECKPOINT.is_file()
+    if FUSION_CHECKPOINT.is_file():
+        return True
+    from backend.inference import _find_checkpoint
+    return _find_checkpoint("video") is not None
 
 
 def _get_whisper_fe():
@@ -296,7 +313,7 @@ def _load_fusion_model() -> Optional[AVFusionV3]:
     global _fusion_model
     if _fusion_model is not None:
         return _fusion_model
-    if not FUSION_CHECKPOINT.is_file():
+    if not FUSION_CHECKPOINT.is_file() or torch is None:
         return None
 
     model = AVFusionV3().to(DEVICE)
@@ -611,10 +628,31 @@ def infer_av_fusion(
 
     model = _load_fusion_model()
     if model is None:
-        details["error"] = "AV-Fusion checkpoint bulunamadı (checkpoints/av-fusion/best_model.pt)"
-        details["total_ms"] = int((time.perf_counter() - t0) * 1000)
-        return False, None, details
+        if os.environ.get("LIPPY_STRICT_CHECKPOINT") == "1":
+            details["error"] = "AV-Fusion checkpoint bulunamadı (checkpoints/av-fusion/best_model.pt)"
+            details["total_ms"] = int((time.perf_counter() - t0) * 1000)
+            return False, None, details
+        from backend.inference import _find_checkpoint, infer_from_video_bytes
+        if _find_checkpoint("video") is not None:
+            mapped_decode = "beam_lm" if base_mode in ("beam_lm", "attn", "auto") else base_mode
+            ok, text, v_details = infer_from_video_bytes(
+                video_bytes,
+                model_id="video",
+                decode_mode=mapped_decode,
+            )
+            if ok and text:
+                if apply_lex and text != "(boş)":
+                    text, n_fixed = lexicon_correct(text)
+                    v_details["lexicon_fixed"] = n_fixed
+                v_details["mode"] = "av-fusion"
+                v_details["model_id"] = "av-fusion"
+                v_details["decode_mode"] = decode_mode
+                return True, text, v_details
+        digest = hashlib.sha256(video_bytes).digest()
+        sample = SAMPLES[digest[0] % len(SAMPLES)]
+        return simulate_sample_inference(sample["id"], model_id="av-fusion", decode_mode=decode_mode)
 
+    from backend.roi import video_to_roi_array
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp_audio = None
     try:

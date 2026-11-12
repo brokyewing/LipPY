@@ -65,10 +65,9 @@ def _detect_backend():
             print("[Detector]     pip install mediapipe==0.10.14 yapip backend'i tekrar baslat")
             return _BACKEND
         except ImportError:
-            raise ImportError(
-                "Hicbir landmark detector yuklu degil!\n"
-                "Tavsiye edilen: pip install mediapipe==0.10.14"
-            )
+            _BACKEND = 'opencv'
+            print("[Detector] MediaPipe yuklu degil, OpenCV Haar/Geometri 4-landmark fallback aktif")
+            return _BACKEND
 
 
 class LandmarksDetector:
@@ -81,6 +80,10 @@ class LandmarksDetector:
             import mediapipe as mp
             self.mp_face_mesh = mp.solutions.face_mesh
             self.detect = self._detect_mediapipe
+        elif backend == 'opencv':
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            self.face_cascade = cv2.CascadeClassifier(cascade_path)
+            self.detect = self._detect_opencv
         else:  # fan (deneysel)
             from ibug.face_detection import RetinaFacePredictor
             from ibug.face_alignment import FANPredictor
@@ -189,4 +192,31 @@ class LandmarksDetector:
                 landmarks.append(None)
         print(f"[Detector] FAN {len(video_frames)} frame icin: {(time.perf_counter() - t0):.1f}s")
 
+        return landmarks
+
+    def _detect_opencv(self, video_frames):
+        """OpenCV Haar Cascade + kanonik yüz oranları ile 4 landmark [right_eye, left_eye, nose, mouth]."""
+        landmarks = []
+        last_box = None
+        for frame in video_frames:
+            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) if frame.ndim == 3 else frame
+            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(48, 48))
+            if len(faces) > 0:
+                # En büyük yüzü seç
+                box = max(faces, key=lambda b: b[2] * b[3])
+                last_box = box
+            elif last_box is not None:
+                box = last_box
+            else:
+                ih, iw = gray.shape[:2]
+                # Merkezde yüz varsayımı (yakın çekim webcam/video)
+                s = min(ih, iw) * 0.75
+                box = ((iw - s) / 2, (ih - s) / 2, s, s)
+
+            x, y, w, h = [float(v) for v in box]
+            right_eye = [x + 0.33 * w, y + 0.38 * h]
+            left_eye = [x + 0.67 * w, y + 0.38 * h]
+            nose = [x + 0.50 * w, y + 0.56 * h]
+            mouth = [x + 0.50 * w, y + 0.76 * h]
+            landmarks.append(np.array([right_eye, left_eye, nose, mouth], dtype=np.float32))
         return landmarks

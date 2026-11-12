@@ -8,7 +8,12 @@
 import os
 import cv2
 import numpy as np
-from skimage import transform as tf
+
+try:
+    from skimage import transform as tf
+except ImportError:
+    tf = None
+
 
 
 def linear_interpolate(landmarks, start_idx, stop_idx):

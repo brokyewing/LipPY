@@ -1,0 +1,12 @@
+services:
+  lippy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${LIPPY_PORT:-8082}:8000"
+    environment:
+      - PORT=8000
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
